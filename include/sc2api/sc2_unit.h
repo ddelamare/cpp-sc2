@@ -197,11 +197,28 @@ public:
     //! The last time the unit was seen.
     uint32_t last_seen_game_loop;
 
+    //! Level of weapon upgrades.
+    int32_t attack_upgrade_level;
+
+    //! Level of armor upgrades.
+    int32_t armor_upgrade_level;
+
+    //! Level of shield upgrades.
+    int32_t shield_upgrade_level;
+
     Unit();
 };
 
 typedef std::vector<const Unit*> Units;
 typedef std::unordered_map<Tag, size_t> UnitIdxMap;
+
+struct UnitDamage {
+    const Unit* unit;
+    float health;
+    float shields;
+};
+
+typedef std::vector<UnitDamage> UnitsDamaged;
 
 class UnitPool {
 public:
@@ -217,14 +234,17 @@ public:
 
     const Units& GetNewUnits() const noexcept { return units_newly_created_; };
     const Units& GetUnitsEnteringVision() const noexcept { return units_entering_vision_; };
-    const Units& GetCompletedBuildings() const noexcept { return units_constructed_; };
-    const Units& GetDamagedUnits() const noexcept { return units_damaged_; };
+    const Units& GetCompletedBuildings() const noexcept { return buildings_constructed_; };
+    const UnitsDamaged& GetDamagedUnits() const noexcept { return units_damaged_; };
     const std::unordered_set<const Unit*>& GetIdledUnits() const noexcept { return units_idled_; };
 
-    void AddUnitEnteredVision(const Unit *u) { units_entering_vision_.push_back(u); }
-    void AddCompletedBuilding(const Unit *u) { units_constructed_.push_back(u); }
-    void AddUnitIdled(const Unit *u) { if (u->alliance == Unit::Alliance::Self) units_idled_.insert(u); }
-    void AddUnitDamaged(const Unit *u) { units_damaged_.push_back(u); }
+    void AddNewUnit(const Unit* u) { units_newly_created_.push_back(u); };
+    void AddUnitEnteredVision(const Unit* u) { units_entering_vision_.push_back(u); }
+    void AddCompletedBuilding(const Unit* u) { buildings_constructed_.push_back(u); }
+    void AddUnitIdled(const Unit* u) {
+        if (u->alliance == Unit::Alliance::Self) units_idled_.insert(u);
+    }
+    void AddUnitDamaged(const Unit* u, float health, float shield) { units_damaged_.push_back({u, health, shield}); }
 
 private:
     void IncrementIndex();
@@ -238,9 +258,9 @@ private:
     std::unordered_map<Tag, Unit *> tag_to_existing_unit_;
     Units units_newly_created_;
     Units units_entering_vision_;
-    Units units_constructed_;
-    Units units_damaged_;
+    Units buildings_constructed_;
+    UnitsDamaged units_damaged_;
     std::unordered_set<const Unit*> units_idled_;
 };
 
-        }
+}

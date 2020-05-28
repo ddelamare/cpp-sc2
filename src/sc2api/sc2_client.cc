@@ -169,10 +169,11 @@ public:
     uint32_t GetFoodCap() const final { return food_cap_; }
     uint32_t GetFoodUsed() const final { return food_used_; }
     uint32_t GetFoodArmy() const final { return food_army_; }
-    uint32_t GetFoodWorkers() const final { return static_cast<float>(food_workers_); }
+    uint32_t GetFoodWorkers() const final { return food_workers_; }
     uint32_t GetIdleWorkerCount() const final { return idle_worker_count_; }
     uint32_t GetArmyCount() const final { return army_count_; }
     uint32_t GetWarpGateCount() const final { return warp_gate_count_; }
+    uint32_t GetLarvaCount() const final { return larva_count_; }
     Point2D GetCameraPos() const final { return camera_pos_; }
     Point3D GetStartLocation() const final { return start_location_; }
     const std::vector<PlayerResult>& GetResults() const final { return player_results_; }
@@ -645,8 +646,8 @@ public:
 
     QueryImp(ProtoInterface& proto, ControlInterface& control, ObservationInterface& observation);
 
-    AvailableAbilities GetAbilitiesForUnit(const Unit* unit, bool ignore_resource_requirements) final;
-    std::vector<AvailableAbilities> GetAbilitiesForUnits(const Units& units, bool ignore_resource_requirements) final;
+    AvailableAbilities GetAbilitiesForUnit(const Unit* unit, bool ignore_resource_requirements, bool use_generalized_ability_id = true) final;
+    std::vector<AvailableAbilities> GetAbilitiesForUnits(const Units& units, bool ignore_resource_requirements, bool use_generalized_ability_id = true) final;
 
     float PathingDistance(const Point2D& start, const Point2D& end) final;
     float PathingDistance(const Unit* start_unit, const Point2D& end) final;
@@ -662,8 +663,8 @@ QueryImp::QueryImp(ProtoInterface& proto, ControlInterface& control, Observation
     observation_(observation) {
 }
 
-AvailableAbilities QueryImp::GetAbilitiesForUnit(const Unit* unit, bool ignore_resource_requirements) {
-    std::vector<AvailableAbilities> available_abilities = GetAbilitiesForUnits({ unit }, ignore_resource_requirements);
+AvailableAbilities QueryImp::GetAbilitiesForUnit(const Unit* unit, bool ignore_resource_requirements, bool use_generalized_ability_id) {
+    std::vector<AvailableAbilities> available_abilities = GetAbilitiesForUnits({ unit }, ignore_resource_requirements, use_generalized_ability_id);
     control_.ErrorIf(available_abilities.empty(), ClientError::NoAbilitiesForTag);
     if (available_abilities.size() < 1) {
         return AvailableAbilities();
@@ -671,7 +672,7 @@ AvailableAbilities QueryImp::GetAbilitiesForUnit(const Unit* unit, bool ignore_r
     return available_abilities[0];
 }
 
-std::vector<AvailableAbilities> QueryImp::GetAbilitiesForUnits(const Units& units, bool ignore_resource_requirements) {
+std::vector<AvailableAbilities> QueryImp::GetAbilitiesForUnits(const Units& units, bool ignore_resource_requirements, bool use_generalized_ability_id) {
     std::vector<AvailableAbilities> available_abilities_out;
 
     // Make the request.
@@ -716,7 +717,13 @@ std::vector<AvailableAbilities> QueryImp::GetAbilitiesForUnits(const Units& unit
         for (int j = 0; j < response_query_available_abilities.abilities_size(); ++j) {
             const SC2APIProtocol::AvailableAbility& ability = response_query_available_abilities.abilities(j);
             AvailableAbility available_ability;
-            available_ability.ability_id = GetGeneralizedAbilityID(ability.ability_id(), observation_);
+            if (use_generalized_ability_id) {
+                available_ability.ability_id = GetGeneralizedAbilityID(ability.ability_id(), observation_);
+            }
+            else {
+                available_ability.ability_id = ability.ability_id();
+            }
+
             available_ability.requires_point = ability.requires_point();
             available_abilities_unit.abilities.push_back(available_ability);
         }
@@ -1569,7 +1576,9 @@ bool ControlImp::CreateGame(const std::string& map_name, const std::vector<Playe
         SC2APIProtocol::PlayerSetup* playerSetup = request_create_game->add_player_setup();
         playerSetup->set_type(SC2APIProtocol::PlayerType(setup.type));
         playerSetup->set_race(SC2APIProtocol::Race(int(setup.race) + 1));
+        playerSetup->set_player_name(setup.player_name);
         playerSetup->set_difficulty(SC2APIProtocol::Difficulty(setup.difficulty));
+        playerSetup->set_ai_build(SC2APIProtocol::AIBuild(setup.ai_build));
     }
 
     request_create_game->set_realtime(realtime);
@@ -1648,6 +1657,8 @@ bool ControlImp::RequestJoinGame(PlayerSetup setup, const InterfaceSettings& set
     SC2APIProtocol::RequestJoinGame* request_join_game = request->mutable_join_game();
 
     request_join_game->set_race(SC2APIProtocol::Race(int(setup.race) + 1));
+    request_join_game->set_player_name(setup.player_name);
+
     if (is_multiplayer_) {
         // Set shared port.
         request_join_game->set_shared_port(ports.shared_port);
@@ -1671,7 +1682,11 @@ bool ControlImp::RequestJoinGame(PlayerSetup setup, const InterfaceSettings& set
     options->set_score(true);
     options->set_show_cloaked(true);
     options->set_show_burrowed_shadows(true);
-    options->set_raw_affects_selection(raw_affects_selection);	// If true, will not generate a deselect command after sending a command to a unit
+    options->set_show_placeholders(true);
+
+    // If raw_affects_selection == true, will not generate a deselect command
+    // after sending a command to a unit
+    options->set_raw_affects_selection(raw_affects_selection);
 
     if (settings.use_feature_layers) {
         SC2APIProtocol::SpatialCameraSetup* setupProto = options->mutable_feature_layer();
@@ -2048,13 +2063,12 @@ void ControlImp::IssueUnitAddedEvents() {
 }
 
 void ControlImp::IssueUnitDamagedEvents() {
-    for (auto const *u : observation_imp_->unit_pool_.GetDamagedUnits()) {
-        client_.OnUnitDamaged(u);
+    for (auto const &u : observation_imp_->unit_pool_.GetDamagedUnits()) {
+        client_.OnUnitDamaged(u.unit, u.health, u.shields);
     }
 }
 
 void ControlImp::IssueIdleEvents(const std::vector<Tag>& commands) {
-
     auto& unit_pool = observation_imp_->unit_pool_;
     // identify idled units where commands were issued last step, but units have no orders now (maybe failed, maybe executed instantly)
     for (auto t : commands) {
@@ -2064,22 +2078,14 @@ void ControlImp::IssueIdleEvents(const std::vector<Tag>& commands) {
     }
 
     // add newly created units (if they are completed)
-    for (auto const* u : unit_pool.GetNewUnits()) 
-      if (u->build_progress >= 1.0f && u->orders.empty()) {
+    for (auto const* u : unit_pool.GetNewUnits()) {
+      if (u->build_progress >= 1.0f && u->orders.empty())
         unit_pool.AddUnitIdled(u);
-      }
-
-    // add completed buildings
-    for (auto const* u : unit_pool.GetCompletedBuildings()) 
-      if (u->build_progress >= 1.0f) {
-        unit_pool.AddUnitIdled(u);
-      }
-
-    // send only one idle event for any unit in any frame
-    for (auto const* u : unit_pool.GetIdledUnits()) {
-      client_.OnUnitIdle(u);
     }
 
+    // send only one idle event for any unit in any frame
+    for (auto const* u : unit_pool.GetIdledUnits())
+        client_.OnUnitIdle(u);
 }
 
 void ControlImp::IssueBuildingCompletedEvents() {

@@ -69,8 +69,7 @@ namespace sc2 {
     class TestGetFoodCount : public TestSequence{
     void OnTestStart() {
         wait_game_loops_ = 10;
-        const GameInfo& game_info = agent_->Observation()->GetGameInfo();
-        Point2D origin_pt_ = FindCenterOfMap(game_info);
+        Point2D origin_pt_ = GetMapCenter();
         Point2D offset_ = Point2D(10.0f, 10.0f);
         agent_->Debug()->DebugCreateUnit(UNIT_TYPEID::PROTOSS_ZEALOT, origin_pt_, agent_->Observation()->GetPlayerID(), 10);
         agent_->Debug()->DebugCreateUnit(UNIT_TYPEID::PROTOSS_PROBE, origin_pt_, agent_->Observation()->GetPlayerID(), 10);
@@ -148,8 +147,7 @@ namespace sc2 {
             const UnitTypes unit_data = obs->GetUnitTypeData();
             UnitTypeData stalker_data = unit_data.at(static_cast<uint32_t>(UNIT_TYPEID::PROTOSS_STALKER));
             UnitTypeData Overlord_data = unit_data.at(static_cast<uint32_t>(UNIT_TYPEID::ZERG_OVERLORDTRANSPORT));
-            const GameInfo& game_info = agent_->Observation()->GetGameInfo();
-            Point2D origin_pt_ = FindCenterOfMap(game_info);
+            Point2D origin_pt_ = GetMapCenter();
             agent_->Debug()->DebugCreateUnit(UNIT_TYPEID::PROTOSS_STALKER, origin_pt_, agent_->Observation()->GetPlayerID(), 1);
             agent_->Debug()->SendDebug();
 
@@ -196,12 +194,10 @@ namespace sc2 {
         }
     };
 
-struct TestGetCloakedEnemyUnit : TestSequence {
-       void OnTestStart() {
+struct TestGetCloakedEnemyUnit: TestSequence {
+    void OnTestStart() {
         wait_game_loops_ = 10;
-
-        const GameInfo& game_info = agent_->Observation()->GetGameInfo();
-        Point2D origin_pt_ = FindCenterOfMap(game_info);
+        Point2D origin_pt_ = GetMapCenter();
 
         agent_->Debug()->DebugCreateUnit(
             UNIT_TYPEID::PROTOSS_VOIDRAY,
@@ -240,6 +236,52 @@ struct TestGetCloakedEnemyUnit : TestSequence {
     }
 };
 
+struct TestUnitUpgradesLevel: TestSequence {
+    void OnTestStart() {
+        wait_game_loops_ = 10;
+        Point2D origin_pt_ = GetMapCenter();
+
+        agent_->Debug()->DebugCreateUnit(
+            UNIT_TYPEID::PROTOSS_ZEALOT,
+            origin_pt_,
+            agent_->Observation()->GetPlayerID(),
+            1
+        );
+        agent_->Debug()->DebugGiveAllUpgrades();
+
+        agent_->Debug()->SendDebug();
+    }
+
+    void OnTestFinish() {
+        const ObservationInterface* obs = agent_->Observation();
+
+        Units found_zealots = obs->GetUnits(
+            Unit::Alliance::Self, IsUnit(UNIT_TYPEID::PROTOSS_ZEALOT));
+
+        if (found_zealots.size() != 1) {
+            ReportErrorAndCleanup("Zealots Count is Incorrect");
+            return;
+        }
+
+        if (found_zealots.front()->attack_upgrade_level != 2) {
+            ReportErrorAndCleanup("Zealots Attack Upgrades Level is Incorrect");
+            return;
+        }
+
+        if (found_zealots.front()->armor_upgrade_level != 2) {
+            ReportErrorAndCleanup("Zealots Armor Upgrades Level is Incorrect");
+            return;
+        }
+
+        if (found_zealots.front()->shield_upgrade_level != 2) {
+            ReportErrorAndCleanup("Zealots Shield Upgrades Level is Incorrect");
+            return;
+        }
+
+        KillAllUnits();
+    }
+};
+
 //
 // TestObservationBot
 //
@@ -262,6 +304,7 @@ TestObservationBot::TestObservationBot() :
     Add(TestGetBuffData());
     Add(TestGetResources());
     Add(TestGetCloakedEnemyUnit());
+    Add(TestUnitUpgradesLevel());
 }
 
 void TestObservationBot::OnTestsBegin() {
